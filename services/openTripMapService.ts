@@ -1,7 +1,7 @@
 import type { AttractionResult } from "@/types/trip";
 
 const OTM_BASE = "https://api.opentripmap.com/0.1/en";
-const API_KEY = process.env.OPENTRIPMAP_API_KEY || "5ae2e3f221c38a28845f05b6a1c1c19f3db85e5af2c87e2c51d83b73";
+const API_KEY = process.env.OPENTRIPMAP_API_KEY || "";
 
 export async function fetchAttractions(lat: number, lon: number, radius = 10000): Promise<AttractionResult[]> {
   try {

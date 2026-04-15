@@ -26,6 +26,7 @@ export function estimateCost(
   const tier = getTier(destination);
   const isLuxury = preferences.includes("luxury");
   const isBudget = preferences.includes("budget");
+  // Children are estimated at ~70% of adult costs for accommodation and food
   const totalPeople = travelers.adults + travelers.children * 0.7;
 
   const rooms = Math.ceil(travelers.adults / 2) + (travelers.children > 0 ? 1 : 0);
