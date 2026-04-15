@@ -111,7 +111,7 @@ export function parseDateRange(message: string): {
       if (endDate < startDate) {
         endDate = new Date(startDate.getFullYear() + 1, endMonth, endDay);
       }
-      const duration = Math.round((endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24));
+      const duration = Math.round((endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24)) + 1;
       return {
         startDate: format(startDate, "yyyy-MM-dd"),
         endDate: format(endDate, "yyyy-MM-dd"),
@@ -138,7 +138,7 @@ export function parseDateRange(message: string): {
       if (startDate < today) startDate = new Date(year + 1, startMonth, startDay);
       let endDate = new Date(startDate.getFullYear(), endMonth, endDay);
       if (endDate < startDate) endDate = new Date(startDate.getFullYear() + 1, endMonth, endDay);
-      const duration = Math.round((endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24));
+      const duration = Math.round((endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24)) + 1;
       return {
         startDate: format(startDate, "yyyy-MM-dd"),
         endDate: format(endDate, "yyyy-MM-dd"),

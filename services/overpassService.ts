@@ -43,7 +43,7 @@ export async function fetchHotels(lat: number, lon: number, radiusMeters = 5000)
           lat: elLat,
           lon: elLon,
           type: tags.tourism || "hotel",
-          stars: starsVal !== null && isNaN(starsVal) ? null : starsVal,
+          stars: starsVal !== null && !isNaN(starsVal) ? starsVal : null,
           source: "OpenStreetMap",
         } as HotelResult;
       })
