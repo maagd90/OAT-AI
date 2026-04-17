@@ -19,22 +19,73 @@ const KNOWN_CITIES = [
   "Beirut", "Tel Aviv", "Casablanca", "Tunis", "Algiers",
   "Accra", "Lagos", "Dar es Salaam", "Addis Ababa",
   "Mexico City", "Cancun", "Buenos Aires", "Bogota", "Lima", "Santiago",
+  "Baku", "Tbilisi", "Yerevan", "Tashkent", "Almaty", "Dhaka",
+  "Marrakech", "Petra", "Zanzibar", "Havana", "Rio de Janeiro", "Sao Paulo",
 ];
 
+// Common misspellings / alternate spellings → canonical city name
+const CITY_ALIASES: Record<string, string> = {
+  bakku: "Baku", bakoo: "Baku", bakou: "Baku",
+  instanbul: "Istanbul", istambul: "Istanbul", istabul: "Istanbul",
+  duabi: "Dubai", dubay: "Dubai", dubaii: "Dubai",
+  parris: "Paris", pariss: "Paris",
+  londan: "London", londen: "London", loandon: "London", lundon: "London",
+  tokyio: "Tokyo", tokio: "Tokyo",
+  bankok: "Bangkok", bangok: "Bangkok",
+  singapur: "Singapore", singapour: "Singapore",
+  barselona: "Barcelona", barcellona: "Barcelona",
+  mosco: "Moscow", moskow: "Moscow", moskva: "Moscow",
+  prage: "Prague", praag: "Prague",
+  viena: "Vienna", wien: "Vienna",
+  budhapest: "Budapest", budapesht: "Budapest",
+  buchares: "Bucharest", bucuresti: "Bucharest",
+  marakesh: "Marrakech", marrakesh: "Marrakech",
+  tbilissi: "Tbilisi", tibilisi: "Tbilisi",
+  tashkant: "Tashkent", taskent: "Tashkent",
+  djakarta: "Jakarta", jacarta: "Jakarta",
+  hawana: "Havana", habana: "Havana",
+};
+
 function extractDestination(message: string): string | undefined {
-  const toPattern = /(?:to|visit(?:ing)?|in|explore?|going\s+to|trip\s+to|travel\s+to|holiday\s+(?:in|to)|vacation\s+(?:in|to))\s+([A-Z][a-zA-Z\s]+?)(?:\s+from|\s+on|\s+for|\s+with|\s+under|\s+between|\s+in|\s+this|\s+next|[,.]|$)/i;
-  const toMatch = message.match(toPattern);
-  if (toMatch) {
-    const candidate = toMatch[1].trim();
-    if (candidate.length > 2 && !/^(my|the|a|an|our|this|next|last)$/i.test(candidate)) {
-      return candidate;
+  const canonicalizeCity = (value: string): string => {
+    // Strip leading travel verbs that may have leaked into the capture
+    const cleaned = value
+      .replace(/^(go|visit|explore|travel|fly|head|drive|move|come|get)\s+/i, "")
+      .replace(/\s+(go|visit|explore|travel|fly|head|drive|move|come|get)\s*$/i, "")
+      .trim();
+    const trimmed = cleaned || value.trim();
+    const known = KNOWN_CITIES.find((city) => city.toLowerCase() === trimmed.toLowerCase());
+    if (known) return known;
+    return trimmed
+      .split(/\s+/)
+      .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
+      .join(" ");
+  };
+
+  // First: check for exact KNOWN_CITIES match (most reliable)
+  for (const city of KNOWN_CITIES) {
+    const pattern = new RegExp(`\\b${city.replace(/\s+/g, "\\s+")}\\b`, "i");
+    if (pattern.test(message)) {
+      return city;
     }
   }
 
-  for (const city of KNOWN_CITIES) {
-    const pattern = new RegExp(`\\b${city}\\b`, "i");
-    if (pattern.test(message)) {
-      return city;
+  // Check for common misspellings / aliases
+  const words = message.toLowerCase().split(/\s+/);
+  for (const word of words) {
+    const cleaned = word.replace(/[^a-z]/g, "");
+    if (cleaned && CITY_ALIASES[cleaned]) {
+      return CITY_ALIASES[cleaned];
+    }
+  }
+
+  // Then: use pattern matching with verb-aware prefixes
+  const toPattern = /(?:go\s+to|going\s+to|trip\s+to|travel\s+to|holiday\s+(?:in|to)|vacation\s+(?:in|to)|visit(?:ing)?|explore?|go|to|in)\s+([a-zA-Z][a-zA-Z\s]+?)(?:\s+from|\s+on|\s+for|\s+with|\s+under|\s+between|\s+in|\s+this|\s+next|\s+can|\s+and|\s+please|\s+my|\s+where|\s+how|[,.]|\?|$)/i;
+  const toMatch = message.match(toPattern);
+  if (toMatch) {
+    const candidate = canonicalizeCity(toMatch[1]);
+    if (candidate.length > 2 && !/^(my|the|a|an|our|this|next|last|stay|days?|want|have)$/i.test(candidate)) {
+      return candidate;
     }
   }
 
@@ -58,7 +109,7 @@ function extractPreferences(message: string): string[] {
   const prefs: string[] = [];
 
   if (/luxury|5[\s-]?star|premium/.test(lower)) prefs.push("luxury");
-  if (/budget|cheap|afford|low[\s-]cost/.test(lower)) prefs.push("budget");
+  if (/budget[\s-](?:friendly|trip|travel|hotel|option|stay)|budget\s+\w*\s*trip|cheap|afford|low[\s-]cost/.test(lower)) prefs.push("budget");
   if (/family[\s-]friendly|family/.test(lower)) prefs.push("family-friendly");
   if (/romantic|honeymoon|couple/.test(lower)) prefs.push("romantic");
   if (/beach|seaside|coastal|ocean/.test(lower)) prefs.push("beach");

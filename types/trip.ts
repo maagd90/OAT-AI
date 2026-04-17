@@ -38,6 +38,9 @@ export interface HotelResult {
   type: string;
   stars?: number | null;
   source: string;
+  pricePerNight?: number;
+  totalPrice?: number;
+  area?: string;
 }
 
 export interface AttractionResult {

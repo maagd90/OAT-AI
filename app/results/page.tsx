@@ -33,6 +33,8 @@ interface ResultsState {
   attractions?: AttractionResult[];
   weather?: WeatherDay[];
   itinerary?: ItineraryDay[];
+  itineraryProvider?: "oss-ai" | "rule-based";
+  aiFailureReason?: string;
   estimate?: CostEstimate;
 }
 
@@ -126,7 +128,7 @@ function ResultsContent() {
     let weather: WeatherDay[] = [];
 
     const [hotelsResult, attractionsResult, weatherResult] = await Promise.allSettled([
-      fetch(`/api/hotels?lat=${location.lat}&lon=${location.lon}`).then((r) => r.json()),
+      fetch(`/api/hotels?lat=${location.lat}&lon=${location.lon}&destination=${encodeURIComponent(parsed.destination || "")}&duration=${parsed.duration || 3}&preferences=${encodeURIComponent((parsed.preferences || []).join(","))}`).then((r) => r.json()),
       fetch(`/api/attractions?lat=${location.lat}&lon=${location.lon}`).then((r) => r.json()),
       fetch(`/api/weather?lat=${location.lat}&lon=${location.lon}&start=${parsed.startDate || ""}&end=${parsed.endDate || ""}`).then((r) => r.json()),
     ]);
@@ -154,34 +156,26 @@ function ResultsContent() {
 
     setLoading((l) => ({ ...l, hotels: false, attractions: false, weather: false }));
 
-    // Step 4: Itinerary
-    setLoading((l) => ({ ...l, itinerary: true }));
+    // Step 4 + 5: Build itinerary and estimate in parallel
+    setLoading((l) => ({ ...l, itinerary: true, estimate: true }));
     let itinerary: ItineraryDay[] = [];
-    try {
-      const res = await fetch("/api/itinerary", {
+    let estimate: CostEstimate | undefined;
+
+    const [itineraryResult, estimateResult] = await Promise.allSettled([
+      fetch("/api/itinerary", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           destination: parsed.destination,
           duration: parsed.duration || 3,
+          startDate: parsed.startDate,
+          endDate: parsed.endDate,
           attractions,
           weather,
           preferences: parsed.preferences,
         }),
-      });
-      const data = await res.json();
-      itinerary = data.days || [];
-      setResults((r) => ({ ...r, itinerary }));
-    } catch {
-      setErrors((e) => ({ ...e, itinerary: "Could not build itinerary" }));
-    } finally {
-      setLoading((l) => ({ ...l, itinerary: false }));
-    }
-
-    // Step 5: Cost estimate
-    setLoading((l) => ({ ...l, estimate: true }));
-    try {
-      const res = await fetch("/api/estimate", {
+      }).then((r) => r.json()),
+      fetch("/api/estimate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -191,11 +185,27 @@ function ResultsContent() {
           budget: parsed.budget,
           preferences: parsed.preferences,
         }),
-      });
-      const estimate = await res.json();
-      setResults((r) => ({ ...r, estimate }));
+      }).then((r) => r.json()),
+    ]);
 
-      // Save trip
+    if (itineraryResult.status === "fulfilled" && Array.isArray(itineraryResult.value?.days)) {
+      itinerary = itineraryResult.value.days;
+      setResults((r) => ({ ...r, itinerary, itineraryProvider: itineraryResult.value.provider || "rule-based", aiFailureReason: itineraryResult.value.aiFailureReason }));
+    } else {
+      setErrors((e) => ({ ...e, itinerary: "Could not build itinerary" }));
+    }
+
+    if (estimateResult.status === "fulfilled" && typeof estimateResult.value?.totalEstimate === "number") {
+      estimate = estimateResult.value as CostEstimate;
+      setResults((r) => ({ ...r, estimate }));
+    } else {
+      setErrors((e) => ({ ...e, estimate: "Could not estimate cost" }));
+    }
+
+    setLoading((l) => ({ ...l, itinerary: false, estimate: false }));
+
+    if (estimate) {
+      // Save trip when estimate is available
       saveTrip(message, parsed, {
         parsedTrip: parsed,
         location: location || undefined,
@@ -206,10 +216,6 @@ function ResultsContent() {
         estimate,
       });
       setSaved(true);
-    } catch {
-      setErrors((e) => ({ ...e, estimate: "Could not estimate cost" }));
-    } finally {
-      setLoading((l) => ({ ...l, estimate: false }));
     }
   }, []);
 
@@ -218,6 +224,117 @@ function ResultsContent() {
       runPlan(query);
     }
   }, [query, runPlan]);
+
+  const refreshEstimate = useCallback(async (nextParsed: ParsedTrip) => {
+    if (!nextParsed.destination) return;
+
+    setSaved(false);
+    setErrors((e) => ({ ...e, estimate: undefined }));
+    setLoading((l) => ({ ...l, estimate: true }));
+
+    try {
+      const res = await fetch("/api/estimate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          destination: nextParsed.destination,
+          duration: nextParsed.duration || 3,
+          travelers: nextParsed.travelers,
+          budget: nextParsed.budget,
+          preferences: nextParsed.preferences,
+        }),
+      });
+
+      const estimateData = await res.json();
+      if (res.ok) {
+        setResults((r) => ({ ...r, estimate: estimateData }));
+      } else {
+        setErrors((e) => ({ ...e, estimate: "Could not refresh cost estimate" }));
+      }
+    } catch {
+      setErrors((e) => ({ ...e, estimate: "Could not refresh cost estimate" }));
+    } finally {
+      setLoading((l) => ({ ...l, estimate: false }));
+    }
+  }, []);
+
+  const refreshWeather = useCallback(async () => {
+    if (!results.location || !results.parsed) return;
+
+    setErrors((e) => ({ ...e, weather: undefined }));
+    setLoading((l) => ({ ...l, weather: true }));
+
+    try {
+      const weatherRes = await fetch(
+        `/api/weather?lat=${results.location.lat}&lon=${results.location.lon}&start=${results.parsed.startDate || ""}&end=${results.parsed.endDate || ""}`
+      );
+      const weatherData = await weatherRes.json();
+      if (weatherRes.ok && Array.isArray(weatherData.daily)) {
+        setResults((r) => ({ ...r, weather: weatherData.daily }));
+      } else {
+        setErrors((e) => ({ ...e, weather: "Unable to fetch weather data. This may be a temporary service issue. Please try again." }));
+      }
+    } catch {
+      setErrors((e) => ({ ...e, weather: "Unable to fetch weather data. This may be a temporary service issue. Please try again." }));
+    } finally {
+      setLoading((l) => ({ ...l, weather: false }));
+    }
+  }, [results.location, results.parsed]);
+
+  const refreshAfterDateChange = useCallback(async (nextParsed: ParsedTrip) => {
+    if (!results.location || !nextParsed.destination) return;
+
+    setErrors((e) => ({ ...e, weather: undefined, itinerary: undefined }));
+    setLoading((l) => ({ ...l, weather: true, itinerary: true }));
+
+    let nextWeather: WeatherDay[] = results.weather || [];
+
+    try {
+      const weatherRes = await fetch(
+        `/api/weather?lat=${results.location.lat}&lon=${results.location.lon}&start=${nextParsed.startDate || ""}&end=${nextParsed.endDate || ""}`
+      );
+      const weatherData = await weatherRes.json();
+      if (weatherRes.ok && Array.isArray(weatherData.daily)) {
+        nextWeather = weatherData.daily;
+        setResults((r) => ({ ...r, weather: nextWeather }));
+      } else {
+        setErrors((e) => ({ ...e, weather: "Unable to fetch weather for selected dates. Please try adjusting your dates." }));
+      }
+    } catch {
+      setErrors((e) => ({ ...e, weather: "Unable to fetch weather for selected dates. Please try adjusting your dates." }));
+    } finally {
+      setLoading((l) => ({ ...l, weather: false }));
+    }
+
+    try {
+      const itineraryRes = await fetch("/api/itinerary", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          destination: nextParsed.destination,
+          duration: nextParsed.duration || 3,
+          startDate: nextParsed.startDate,
+          endDate: nextParsed.endDate,
+          attractions: results.attractions || [],
+          weather: nextWeather,
+          preferences: nextParsed.preferences,
+        }),
+      });
+
+      const itineraryData = await itineraryRes.json();
+      if (itineraryRes.ok && Array.isArray(itineraryData.days)) {
+        setResults((r) => ({ ...r, itinerary: itineraryData.days, itineraryProvider: itineraryData.provider || "rule-based", aiFailureReason: itineraryData.aiFailureReason }));
+      } else {
+        setErrors((e) => ({ ...e, itinerary: "Could not refresh itinerary for selected dates" }));
+      }
+    } catch {
+      setErrors((e) => ({ ...e, itinerary: "Could not refresh itinerary for selected dates" }));
+    } finally {
+      setLoading((l) => ({ ...l, itinerary: false }));
+    }
+
+    await refreshEstimate(nextParsed);
+  }, [results.location, results.weather, results.attractions, refreshEstimate]);
 
   const handleRerun = (e: React.FormEvent) => {
     e.preventDefault();
@@ -276,7 +393,28 @@ function ResultsContent() {
         {/* Trip Summary */}
         {results.parsed && (
           <div className="mb-6">
-            <TripSummaryCard parsedTrip={results.parsed} location={results.location} />
+            <TripSummaryCard
+              parsedTrip={results.parsed}
+              location={results.location}
+              onDatesChange={(startDate, endDate, duration) => {
+                if (!results.parsed) return;
+                const nextParsed: ParsedTrip = { ...results.parsed, startDate, endDate, duration };
+                setResults((r) => ({ ...r, parsed: nextParsed }));
+                void refreshAfterDateChange(nextParsed);
+              }}
+              onTravelersChange={(travelers) => {
+                if (!results.parsed) return;
+                const nextParsed: ParsedTrip = { ...results.parsed, travelers };
+                setResults((r) => ({ ...r, parsed: nextParsed }));
+                void refreshEstimate(nextParsed);
+              }}
+              onBudgetChange={(budget, currency) => {
+                if (!results.parsed) return;
+                const nextParsed: ParsedTrip = { ...results.parsed, budget, currency };
+                setResults((r) => ({ ...r, parsed: nextParsed }));
+                void refreshEstimate(nextParsed);
+              }}
+            />
           </div>
         )}
 
@@ -296,6 +434,32 @@ function ResultsContent() {
             ℹ️ <strong>Important:</strong> This is an AI-generated travel recommendation plan, not a confirmed booking. All prices are estimates only. Hotels and attractions are suggested based on open data from OpenStreetMap and OpenTripMap.
           </p>
         </div>
+
+        {/* Budget Warning Banner */}
+        {results.estimate && results.parsed?.budget && !results.estimate.withinBudget && (
+          <div className="mb-6 bg-red-50 border border-red-300 rounded-xl p-5">
+            <div className="flex items-start gap-3">
+              <span className="text-2xl">⚠️</span>
+              <div>
+                <h3 className="text-sm font-bold text-red-800 mb-1">Budget Exceeded</h3>
+                <p className="text-sm text-red-700">
+                  Sorry, your budget of <strong>${results.parsed.budget.toLocaleString()} {results.parsed.currency || "USD"}</strong> is
+                  not sufficient for this trip (estimated cost: <strong>${results.estimate.totalEstimate.toLocaleString()} {results.parsed.currency || "USD"}</strong>).
+                  Please increase your budget to at least <strong>${Math.ceil(results.estimate.totalEstimate * 1.1).toLocaleString()} {results.parsed.currency || "USD"}</strong> so
+                  we can create the best itinerary and show you the best hotels.
+                </p>
+                <div className="mt-2 text-xs text-red-600">
+                  <p>💡 Tips to reduce costs:</p>
+                  <ul className="list-disc ml-4 mt-1 space-y-0.5">
+                    <li>Reduce the number of travel days</li>
+                    <li>Choose budget-friendly accommodations instead of luxury</li>
+                    <li>Travel during off-peak season for lower prices</li>
+                  </ul>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Map */}
         {results.location && (
@@ -345,7 +509,11 @@ function ResultsContent() {
           {loading.weather ? (
             <LoadingState message="Fetching weather..." />
           ) : errors.weather ? (
-            <ErrorState message={errors.weather} />
+            <ErrorState
+              title="Weather data unavailable"
+              message={errors.weather}
+              onRetry={refreshWeather}
+            />
           ) : (
             <WeatherPanel weather={results.weather || []} />
           )}
@@ -353,7 +521,14 @@ function ResultsContent() {
 
         {/* Itinerary */}
         <section className="mb-8">
-          <h2 className="text-lg font-bold text-gray-800 mb-3">📅 Day-by-Day Itinerary</h2>
+          <div className="flex items-center gap-2 mb-3">
+            <h2 className="text-lg font-bold text-gray-800">📅 Day-by-Day Itinerary</h2>
+            {results.itineraryProvider === "oss-ai" ? (
+              <span className="text-[11px] px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 font-semibold">Open-source AI</span>
+            ) : (
+              <span className="text-[11px] px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 font-semibold" title={results.aiFailureReason || "AI unavailable"}>Rule-based fallback</span>
+            )}
+          </div>
           {loading.itinerary ? (
             <LoadingState message="Building itinerary..." />
           ) : errors.itinerary ? (

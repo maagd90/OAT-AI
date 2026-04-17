@@ -65,11 +65,11 @@ export function parseDateRange(message: string): {
     };
   }
 
-  // "for N days"
+  // "for N days" -> start today
   const forDays = lower.match(/for\s+(\d+)\s+days?/);
   if (forDays) {
     const days = parseInt(forDays[1], 10);
-    const start = addDays(today, 7);
+    const start = today;
     const end = addDays(start, days - 1);
     return {
       startDate: format(start, "yyyy-MM-dd"),
@@ -78,17 +78,32 @@ export function parseDateRange(message: string): {
     };
   }
 
-  // "N-day trip" or "N day trip"
+  // "N-day trip" or "N day trip" -> start today
   const nDay = lower.match(/(\d+)[\s-]day\s+trip/);
   if (nDay) {
     const days = parseInt(nDay[1], 10);
-    const start = addDays(today, 7);
+    const start = today;
     const end = addDays(start, days - 1);
     return {
       startDate: format(start, "yyyy-MM-dd"),
       endDate: format(end, "yyyy-MM-dd"),
       duration: days,
     };
+  }
+
+  // Generic "N days" (e.g. "Dubai 10 days") -> start today
+  const genericDays = lower.match(/\b(\d+)\s+days?\b/);
+  if (genericDays) {
+    const days = parseInt(genericDays[1], 10);
+    if (!isNaN(days) && days > 0) {
+      const start = today;
+      const end = addDays(start, days - 1);
+      return {
+        startDate: format(start, "yyyy-MM-dd"),
+        endDate: format(end, "yyyy-MM-dd"),
+        duration: days,
+      };
+    }
   }
 
   // "from 4 July to 10 July" or "from 4th July till 10th July"

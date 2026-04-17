@@ -34,7 +34,19 @@ export default function HotelsList({ hotels }: HotelsListProps) {
               {hotel.stars && (
                 <p className="text-xs text-yellow-500 mt-1">{"⭐".repeat(Math.min(hotel.stars, 5))}</p>
               )}
+              {hotel.area && (
+                <p className="text-xs text-gray-400 mt-0.5">📍 {hotel.area}</p>
+              )}
             </div>
+            {hotel.pricePerNight != null && (
+              <div className="text-right shrink-0">
+                <p className="text-sm font-bold text-green-700">${hotel.pricePerNight}</p>
+                <p className="text-[10px] text-gray-400">per night</p>
+                {hotel.totalPrice != null && (
+                  <p className="text-xs text-gray-500 mt-0.5">${hotel.totalPrice} total</p>
+                )}
+              </div>
+            )}
           </div>
           <div className="mt-2 flex items-center justify-between">
             <span className="text-xs text-gray-400">Source: {hotel.source}</span>

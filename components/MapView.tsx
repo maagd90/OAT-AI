@@ -11,14 +11,34 @@ interface MapViewProps {
 
 export default function MapView({ location, hotels = [], attractions = [] }: MapViewProps) {
   const mapRef = useRef<HTMLDivElement>(null);
-  const mapInstanceRef = useRef<unknown>(null);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const mapInstanceRef = useRef<any>(null);
 
   useEffect(() => {
-    if (!mapRef.current || mapInstanceRef.current) return;
+    if (!mapRef.current) return;
+
+    let cancelled = false;
 
     const initMap = async () => {
       const L = (await import("leaflet")).default;
       await import("leaflet/dist/leaflet.css");
+
+      if (cancelled || !mapRef.current) return;
+
+      // Always tear down any previous instance first
+      if (mapInstanceRef.current) {
+        try { mapInstanceRef.current.remove(); } catch { /* already removed */ }
+        mapInstanceRef.current = null;
+      }
+
+      // Extra safety: clear any Leaflet internal ID on the container
+      // so L.map won't think it's already initialized
+      const container = mapRef.current;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      if ((container as any)._leaflet_id) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        delete (container as any)._leaflet_id;
+      }
 
       // Fix default marker icons
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -29,9 +49,9 @@ export default function MapView({ location, hotels = [], attractions = [] }: Map
         shadowUrl: "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-shadow.png",
       });
 
-      if (!mapRef.current) return;
+      if (cancelled || !mapRef.current) return;
 
-      const map = L.map(mapRef.current).setView([location.lat, location.lon], 13);
+      const map = L.map(container).setView([location.lat, location.lon], 13);
       mapInstanceRef.current = map;
 
       L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
@@ -77,9 +97,9 @@ export default function MapView({ location, hotels = [], attractions = [] }: Map
     initMap();
 
     return () => {
+      cancelled = true;
       if (mapInstanceRef.current) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (mapInstanceRef.current as any).remove();
+        try { mapInstanceRef.current.remove(); } catch { /* already removed */ }
         mapInstanceRef.current = null;
       }
     };
